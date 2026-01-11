@@ -212,5 +212,5 @@ __marimo__/
 
 # ------ Project Specific ------
 
-test_data/
+*.pdf
 *.json

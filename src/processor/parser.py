@@ -1,113 +1,79 @@
-import sys
-import re
-import json
 import pdfplumber
-
-from decimal import Decimal, getcontext
+import re
+from decimal import Decimal
 from datetime import datetime
+from typing import List, Dict, Optional
 
-def parse_amount_from_end(text: str):
-    """Parse out the amount from a string like 20241030 PRIX EIGANES 587893 83 STAVANGER 24,85"""
-    # Find the last occurrence of "-" or start from the end
-    dash_pos = text.rfind("-")
-    search_start = dash_pos + 1 if dash_pos != -1 else 0
+class NordeaParser:
+    """Library for parsing Nordea PDF credit card statements."""
     
-    # Extract the substring we need to search
-    suffix = text[search_start:]
-    
-    # Build a list of valid number characters
-    valid_chars = []
-    for char in reversed(suffix):
-        if char.isdigit() or char in " ,.":
-            valid_chars.append(char)
-        elif valid_chars:  # Stop at first invalid char after finding valid ones
-            break
-    
-    if not valid_chars:
-        return None
-    
-    # Reverse back and normalize
-    buffer = ''.join(reversed(valid_chars))
-    normalized = buffer.replace(" ", "").replace(",", ".")
-    
-    try:
-        return Decimal(normalized)
-    except ValueError:
-        return None
-    
-def text_between_first_space_and_last_minus(text: str) -> str | None:
-    """Parse out the merchant name from a string like 20241030 PRIX EIGANES 587893 83 STAVANGER 24,85"""
-    # Find first space
-    first_space = text.find(" ")
-    if first_space == -1:
-        return None
+    def __init__(self, currency: str = "SEK"):
+        self.currency = currency
 
-    # Find last negative sign
-    last_minus = text.rfind("-")
-    if last_minus == -1 or last_minus <= first_space:
-        return None
+    def _is_valid_date(self, date_str: str) -> bool:
+        """Checks if the string is a valid YYYYMMDD date."""
+        if not date_str.isdigit() or len(date_str) != 8:
+            return False
+        try:
+            datetime.strptime(date_str, "%Y%m%d")
+            return True
+        except ValueError:
+            return False
 
-    return text[first_space + 1:last_minus]
+    def _extract_merchant(self, text: str) -> Optional[str]:
+        """Extracts text between the first space and the last minus sign."""
+        first_space = text.find(" ")
+        last_minus = text.rfind("-")
+        if first_space == -1 or last_minus == -1 or last_minus <= first_space:
+            return None
+        return text[first_space + 1:last_minus].strip()
 
+    def _extract_amount(self, text: str) -> Optional[Decimal]:
+        """Parses the numerical amount from the end of the string."""
+        # Match an optional minus sign followed by digits with optional spaces/commas/periods
+        # This pattern looks for the last number in the string
+        pattern = r'(-?\s*\d[\d\s,.]*\d|\d)\s*$'
+        match = re.search(pattern, text)
+        
+        if not match:
+            return None
+        
+        amount_str = match.group(0).strip()
+        
+        # Normalize: remove spaces, replace comma with period
+        normalized = amount_str.replace(" ", "").replace(",", ".")
+        
+        try:
+            return Decimal(normalized)
+        except Exception:
+            return None
 
-def is_valid_yyyymmdd(date_str: str) -> bool:
-    '''Check if a string, containing of 8 numbers, is a valid date'''
-    # Must be exactly 8 digits
-    if not date_str.isdigit() or len(date_str) != 8:
-        return False
-
-    try:
-        # Attempt to parse using YYYYMMDD format
-        datetime.strptime(date_str, "%Y%m%d")
-        return True
-    except ValueError:
-        return False
-
-def parse_nordea_pdf(pdf_path):
-    
-    transactions = []
-    full_text_lines = []
-
-    try:
+    def parse_pdf(self, pdf_path: str) -> List[Dict]:
+        """Reads a PDF and returns a list of transaction dictionaries."""
+        transactions = []
+        
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
-                if text:
-                    full_text_lines.extend(text.split('\n'))
-
-        for i, line in enumerate(full_text_lines):
-            match = is_valid_yyyymmdd(line.split(' ')[0])
-            if match:
-                date_raw = line.split(' ')[0]
-                merchant = text_between_first_space_and_last_minus(line)
-                
-                if merchant is None:
+                if not text:
                     continue
-
-                amount = parse_amount_from_end(line)
                 
-                # Format date to YYYY-MM-DD
-                formatted_date = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}"
+                
+                for line in text.split('\n'):
+                    parts = line.split(' ')
+                    if not parts or not self._is_valid_date(parts[0]):
+                        continue
+                    
+                    date_raw = parts[0]
+                    merchant = self._extract_merchant(line)
+                    amount = self._extract_amount(line)
+                
 
-                transactions.append({
-                    "date": formatted_date,
-                    "purchase_place": merchant,
-                    "amount": -1 * amount,
-                    "currency": "SEK"
-                })
-
-        return json.dumps(transactions, default=str, indent=4, ensure_ascii=False)
-
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-if __name__ == "__main__":
-    
-    if len(sys.argv) < 2:
-        print("Usage: python script_name.py <path_to_pdf>")
-        sys.exit(1)
-    
-    pdf_file_path = sys.argv[1]
-    
-    result = parse_nordea_pdf(pdf_file_path)
-    print(result)
+                    if merchant and amount:
+                        transactions.append({
+                            "date": f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}",
+                            "purchase_place": merchant,
+                            "amount": str(amount), # Convert Decimal to string for JSON compatibility
+                            "currency": self.currency
+                        })
+        return transactions

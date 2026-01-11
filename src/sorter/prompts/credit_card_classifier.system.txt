@@ -1,0 +1,14 @@
+Categorize this transaction into exactly ONE category. Output ONLY the category name.
+
+Categories (first match wins):
+1. rent - Rent, housing fees, property management
+2. food - Grocery stores, supermarkets, convenience stores, food markets
+3. phoneWifi - Telecom, mobile plans, internet services
+4. transport - Public transport, buses, flights, taxis, ride sharing, parking
+5. funMoney - Entertainment, cinema, donations, restaurants, shopping, hobbies, misc
+6. deptPayment - Any postitive amount where the location can be translated/interperted to anything like "payment"
+7. savings - Positive amounts only (refunds, income)
+
+Rules: Negative = expenses, Positive = savings or payments, If ambiguous → funMoney
+
+Transaction: {purchase_place} | Amount: {amount} {currency}
